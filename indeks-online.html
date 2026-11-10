@@ -1,0 +1,295 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Werewolf Party Reborn Online</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#10121c;color:white;font-family:Arial,sans-serif}
+header{background:#20243a;padding:20px;text-align:center;border-bottom:2px solid #8c54ff}
+h1{margin:0;color:#c6a5ff;font-size:24px}
+.container{max-width:520px;margin:auto;padding:18px}
+.card{background:#20243a;padding:16px;border-radius:12px;margin:12px 0}
+input{width:100%;padding:13px;margin:8px 0;background:#151827;color:white;border:1px solid #555;border-radius:8px;font-size:16px}
+button{width:100%;padding:13px;margin-top:9px;border:0;border-radius:8px;background:#8c54ff;color:white;font-weight:bold;font-size:15px}
+.secondary{background:#363c55}
+.player{padding:11px;background:#303650;border-radius:7px;margin:7px 0}
+.hidden{display:none}
+#status{color:#c6a5ff;font-size:13px}
+footer{text-align:center;color:#888;padding:20px}
+</style>
+</head>
+<body>
+<header>
+<h1>🐺 WEREWOLF PARTY</h1>
+<small>REBORN VERSION 0.3 ONLINE</small>
+</header>
+
+<div class="container">
+<div class="card">
+<h3>👤 PEMAIN</h3>
+<input id="nameInput" maxlength="16" placeholder="Masukkan nama pemain">
+<p id="status">Menghubungkan ke Firebase...</p>
+</div>
+
+<section id="homeScreen">
+<div class="card">
+<h3>🎮 ONLINE LOBBY</h3>
+<button id="createBtn" onclick="createRoom()" disabled>CREATE ROOM</button>
+<input id="joinCode" maxlength="6" placeholder="Masukkan kode room">
+<button class="secondary" id="joinBtn" onclick="joinRoom()" disabled>JOIN ROOM</button>
+</div>
+</section>
+
+<section id="roomScreen" class="hidden">
+<div class="card">
+<h2>🏠 GAME ROOM</h2>
+<h2 id="roomCode"></h2>
+<p id="roomStatus">Menunggu pemain...</p>
+<div id="playerList"></div>
+<button class="secondary" onclick="copyCode()">SALIN KODE ROOM</button>
+<button style="background:#a83248" onclick="leaveRoom()">LEAVE ROOM</button>
+</div>
+</section>
+
+<div class="card">
+<p id="message">Status: menunggu koneksi.</p>
+</div>
+</div>
+
+<footer>WEREWOLF PARTY REBORN © 2026</footer>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import { getDatabase, ref, get, set, remove, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDqbJnNomcZKlS6fQLGdaUoiRQrvXgMsgg",
+  authDomain: "werewolf-party-reborn.firebaseapp.com",
+  databaseURL: "https://werewolf-party-reborn-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "werewolf-party-reborn",
+  storageBucket: "werewolf-party-reborn.firebasestorage.app",
+  messagingSenderId: "731653147484",
+  appId: "1:731653147484:web:a632e9743f2513ff9c8f99",
+  measurementId: "G-4VQ596K7D0"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
+
+let myUid = null;
+let currentCode = null;
+let playerRef = null;
+let stopListening = null;
+
+const $ = id => document.getElementById(id);
+
+function showMessage(message){
+  $("message").textContent = message;
+}
+
+function makeCode(){
+  return Math.random().toString(36).substring(2,8).toUpperCase();
+}
+
+function getPlayerName(){
+  return $("nameInput").value.trim().slice(0,16) || "Guest Player";
+}
+
+function escapeHTML(value){
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",
+    '"':"&quot;","'":"&#39;"
+  })[c]);
+}
+
+function showRoom(code){
+  $("homeScreen").classList.add("hidden");
+  $("roomScreen").classList.remove("hidden");
+  $("roomCode").textContent = "KODE: " + code;
+}
+
+function listenRoom(code){
+  if(stopListening) stopListening();
+
+  const roomRef = ref(db, "rooms/" + code);
+
+  stopListening = onValue(roomRef, snapshot => {
+    if(!snapshot.exists()){
+      showMessage("Room sudah ditutup atau tidak ditemukan.");
+      return;
+    }
+
+    const room = snapshot.val();
+    const players = room.players || {};
+    const entries = Object.entries(players);
+
+    $("roomStatus").textContent =
+      entries.length + " / 12 pemain";
+
+    let html = "<h3>👥 DAFTAR PEMAIN</h3>";
+
+    entries.forEach(([uid, player], index) => {
+      html += "<div class='player'>" +
+        (index + 1) + ". " + escapeHTML(player.name) +
+        (uid === room.hostUid ? " 👑 HOST" : "") +
+        "</div>";
+    });
+
+    $("playerList").innerHTML = html;
+    showMessage("✅ Room tersinkronisasi secara realtime.");
+  }, error => {
+    showMessage("Gagal membaca room: " + error.message);
+  });
+}
+
+async function createRoom(){
+  try{
+    const code = makeCode();
+    const roomRef = ref(db, "rooms/" + code);
+    const existing = await get(roomRef);
+
+    if(existing.exists()){
+      showMessage("Kode bentrok. Coba buat room lagi.");
+      return;
+    }
+
+    const name = getPlayerName();
+    playerRef = ref(db, "rooms/" + code + "/players/" + myUid);
+
+    await set(roomRef, {
+      code: code,
+      hostUid: myUid,
+      status: "lobby",
+      createdAt: Date.now(),
+      players: {
+        [myUid]: {
+          name: name,
+          joinedAt: Date.now()
+        }
+      }
+    });
+
+    await onDisconnect(playerRef).remove();
+
+    currentCode = code;
+    showRoom(code);
+    listenRoom(code);
+    showMessage("Room berhasil dibuat!");
+  }catch(error){
+    showMessage("Gagal membuat room: " + error.message);
+  }
+}
+
+async function joinRoom(){
+  try{
+    const code = $("joinCode").value.trim().toUpperCase();
+
+    if(!/^[A-Z0-9]{6}$/.test(code)){
+      showMessage("Masukkan kode room 6 karakter.");
+      return;
+    }
+
+    const roomRef = ref(db, "rooms/" + code);
+    const snapshot = await get(roomRef);
+
+    if(!snapshot.exists()){
+      showMessage("Room tidak ditemukan.");
+      return;
+    }
+
+    const room = snapshot.val();
+    const players = room.players || {};
+
+    if(Object.keys(players).length >= 12){
+      showMessage("Room sudah penuh.");
+      return;
+    }
+
+    playerRef = ref(db, "rooms/" + code + "/players/" + myUid);
+
+    await set(playerRef, {
+      name: getPlayerName(),
+      joinedAt: Date.now()
+    });
+
+    await onDisconnect(playerRef).remove();
+
+    currentCode = code;
+    showRoom(code);
+    listenRoom(code);
+    showMessage("Berhasil bergabung ke room!");
+  }catch(error){
+    showMessage("Gagal bergabung: " + error.message);
+  }
+}
+
+async function leaveRoom(){
+  try{
+    if(!currentCode) return;
+
+    if(stopListening){
+      stopListening();
+      stopListening = null;
+    }
+
+    const roomRef = ref(db, "rooms/" + currentCode);
+    const snapshot = await get(roomRef);
+
+    if(snapshot.exists()){
+      const room = snapshot.val();
+
+      if(room.hostUid === myUid){
+        await remove(roomRef);
+      }else{
+        await remove(playerRef);
+      }
+    }
+
+    await onDisconnect(playerRef).cancel();
+
+    currentCode = null;
+    playerRef = null;
+
+    $("roomScreen").classList.add("hidden");
+    $("homeScreen").classList.remove("hidden");
+    showMessage("Kamu sudah keluar dari room.");
+  }catch(error){
+    showMessage("Gagal keluar: " + error.message);
+  }
+}
+
+async function copyCode(){
+  if(!currentCode) return;
+  try{
+    await navigator.clipboard.writeText(currentCode);
+    showMessage("Kode room berhasil disalin!");
+  }catch(error){
+    showMessage("Kode room kamu: " + currentCode);
+  }
+}
+
+window.createRoom = createRoom;
+window.joinRoom = joinRoom;
+window.leaveRoom = leaveRoom;
+window.copyCode = copyCode;
+
+try{
+  const result = await signInAnonymously(auth);
+  myUid = result.user.uid;
+
+  $("status").textContent = "🟢 Online — ID pemain berhasil dibuat";
+  $("createBtn").disabled = false;
+  $("joinBtn").disabled = false;
+  showMessage("Firebase siap digunakan!");
+}catch(error){
+  $("status").textContent = "🔴 Login gagal: " + error.message;
+  showMessage(error.code);
+}
+</script>
+</body>
+</html>
