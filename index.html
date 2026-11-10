@@ -17,6 +17,8 @@ button{width:100%;padding:13px;margin-top:9px;border:0;border-radius:8px;backgro
 .secondary{background:#363c55}
 .player{padding:11px;background:#303650;border-radius:7px;margin:7px 0}
 .hidden{display:none}
+#startBtn{background:#238b57}
+#startBtn:disabled{opacity:.45}
 #status{color:#c6a5ff;font-size:13px}
 footer{text-align:center;color:#888;padding:20px}
 </style>
@@ -24,7 +26,7 @@ footer{text-align:center;color:#888;padding:20px}
 <body>
 <header>
 <h1>🐺 WEREWOLF PARTY</h1>
-<small>REBORN VERSION 0.3 ONLINE</small>
+<small>REBORN VERSION 0.4 ONLINE</small>
 </header>
 
 <div class="container">
@@ -49,6 +51,13 @@ footer{text-align:center;color:#888;padding:20px}
 <h2 id="roomCode"></h2>
 <p id="roomStatus">Menunggu pemain...</p>
 <div id="playerList"></div>
+<div id="roleCard" class="card hidden" style="background:#33264d;border:1px solid #c6a5ff">
+  <h3>🎭 ROLE KAMU</h3>
+  <h2 id="myRole">Menunggu pembagian role...</h2>
+  <p id="roleDescription"></p>
+  <small>Jangan tunjukkan layar ini kepada pemain lain.</small>
+</div>
+<button id="startBtn" onclick="startGame()" disabled>🐺 START GAME</button>
 <button class="secondary" onclick="copyCode()">SALIN KODE ROOM</button>
 <button style="background:#a83248" onclick="leaveRoom()">LEAVE ROOM</button>
 </div>
@@ -115,7 +124,6 @@ function showRoom(code){
 
 function listenRoom(code){
   if(stopListening) stopListening();
-
   const roomRef = ref(db, "rooms/" + code);
 
   stopListening = onValue(roomRef, snapshot => {
@@ -129,22 +137,93 @@ function listenRoom(code){
     const entries = Object.entries(players);
 
     $("roomStatus").textContent =
-      entries.length + " / 12 pemain";
+      (room.status === "started" ? "🎮 GAME DIMULAI" : "Menunggu pemain...") +
+      " — " + entries.length + " / 12 pemain";
 
-    let html = "<h3>👥 DAFTAR PEMAIN</h3>";
-
+    let listHTML = "<h3>👥 DAFTAR PEMAIN</h3>";
     entries.forEach(([uid, player], index) => {
-      html += "<div class='player'>" +
+      listHTML += "<div class='player'>" +
         (index + 1) + ". " + escapeHTML(player.name) +
         (uid === room.hostUid ? " 👑 HOST" : "") +
         "</div>";
     });
+    $("playerList").innerHTML = listHTML;
 
-    $("playerList").innerHTML = html;
+    const isHost = room.hostUid === myUid;
+    $("startBtn").classList.toggle("hidden", !isHost);
+    $("startBtn").disabled = !isHost || room.status !== "lobby" || entries.length < 5;
+    $("startBtn").textContent = room.status === "started"
+      ? "GAME SUDAH DIMULAI" : "🐺 START GAME (MINIMAL 5 PEMAIN)";
+
+    if(room.status === "started"){
+      $("roleCard").classList.remove("hidden");
+      listenMyRole(code);
+    } else {
+      $("roleCard").classList.add("hidden");
+    }
     showMessage("✅ Room tersinkronisasi secara realtime.");
-  }, error => {
-    showMessage("Gagal membaca room: " + error.message);
-  });
+  }, error => showMessage("Gagal membaca room: " + error.message));
+}
+
+let stopRoleListening = null;
+
+function listenMyRole(code){
+  if(stopRoleListening) return;
+  const myRoleRef = ref(db, "privateRoles/" + code + "/" + myUid);
+  stopRoleListening = onValue(myRoleRef, snapshot => {
+    if(!snapshot.exists()){
+      $("myRole").textContent = "Role belum tersedia";
+      $("roleDescription").textContent = "Minta host memeriksa pembagian role.";
+      return;
+    }
+    const role = snapshot.val().role;
+    const descriptions = {
+      "Werewolf": "Kamu berada di tim Werewolf. Jangan sampai identitasmu terbongkar.",
+      "Doctor": "Kamu bisa melindungi satu pemain saat malam.",
+      "Sniper": "Kamu memiliki kemampuan khusus untuk menembak sesuai aturan permainan.",
+      "Civilian": "Cari tahu siapa Werewolf dan bantu warga memenangkan permainan."
+    };
+    $("myRole").textContent = role || "Tidak diketahui";
+    $("roleDescription").textContent = descriptions[role] || "";
+  }, error => showMessage("Gagal membaca role: " + error.message));
+}
+
+async function startGame(){
+  try{
+    if(!currentCode) return;
+    const roomRef = ref(db, "rooms/" + currentCode);
+    const snapshot = await get(roomRef);
+    if(!snapshot.exists()) throw new Error("Room tidak ditemukan.");
+
+    const room = snapshot.val();
+    if(room.hostUid !== myUid) throw new Error("Hanya host yang bisa memulai game.");
+    if(room.status !== "lobby") throw new Error("Game sudah dimulai.");
+
+    const players = Object.entries(room.players || {});
+    if(players.length < 5) throw new Error("Minimal 5 pemain untuk memulai.");
+    if(players.length > 12) throw new Error("Maksimal 12 pemain.");
+
+    const roles = [
+      "Werewolf", "Werewolf", "Doctor", "Sniper",
+      ...Array(Math.max(0, players.length - 4)).fill("Civilian")
+    ];
+    for(let i = roles.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [roles[i], roles[j]] = [roles[j], roles[i]];
+    }
+
+    const privateRoleData = {};
+    players.forEach(([uid], index) => {
+      privateRoleData[uid] = { role: roles[index] };
+    });
+
+    await set(ref(db, "privateRoles/" + currentCode), privateRoleData);
+    await set(ref(db, "rooms/" + currentCode + "/status"), "started");
+    await set(ref(db, "rooms/" + currentCode + "/startedAt"), Date.now());
+    showMessage("🎉 Game dimulai! Role sudah dibagikan.");
+  }catch(error){
+    showMessage("Gagal memulai game: " + error.message);
+  }
 }
 
 async function createRoom(){
@@ -205,6 +284,11 @@ async function joinRoom(){
     const room = snapshot.val();
     const players = room.players || {};
 
+    if(room.status !== "lobby"){
+      showMessage("Game sudah dimulai. Tidak bisa bergabung.");
+      return;
+    }
+
     if(Object.keys(players).length >= 12){
       showMessage("Room sudah penuh.");
       return;
@@ -235,6 +319,10 @@ async function leaveRoom(){
     if(stopListening){
       stopListening();
       stopListening = null;
+    }
+    if(stopRoleListening){
+      stopRoleListening();
+      stopRoleListening = null;
     }
 
     const roomRef = ref(db, "rooms/" + currentCode);
@@ -277,6 +365,7 @@ window.createRoom = createRoom;
 window.joinRoom = joinRoom;
 window.leaveRoom = leaveRoom;
 window.copyCode = copyCode;
+window.startGame = startGame;
 
 try{
   const result = await signInAnonymously(auth);
