@@ -4,7 +4,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Werewolf Party Reborn Online</title>
+<title>Werewolf Party Reborn v0.5</title>
+
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#10121c;color:white;font-family:Arial,sans-serif}
@@ -14,22 +15,26 @@ h1{margin:0;color:#c6a5ff;font-size:24px}
 .card{background:#20243a;padding:16px;border-radius:12px;margin:12px 0}
 input{width:100%;padding:13px;margin:8px 0;background:#151827;color:white;border:1px solid #555;border-radius:8px;font-size:16px}
 button{width:100%;padding:13px;margin-top:9px;border:0;border-radius:8px;background:#8c54ff;color:white;font-weight:bold;font-size:15px}
+button:disabled{opacity:.45}
 .secondary{background:#363c55}
 .player{padding:11px;background:#303650;border-radius:7px;margin:7px 0}
-.hidden{display:none}
+.hidden{display:none!important}
 #startBtn{background:#238b57}
-#startBtn:disabled{opacity:.45}
 #status{color:#c6a5ff;font-size:13px}
+.note{color:#c7c9d6;font-size:12px;line-height:1.5}
 footer{text-align:center;color:#888;padding:20px}
 </style>
 </head>
+
 <body>
+
 <header>
 <h1>🐺 WEREWOLF PARTY</h1>
-<small>REBORN VERSION 0.4 ONLINE</small>
+<small>REBORN VERSION 0.5</small>
 </header>
 
 <div class="container">
+
 <div class="card">
 <h3>👤 PEMAIN</h3>
 <input id="nameInput" maxlength="16" placeholder="Masukkan nama pemain">
@@ -39,9 +44,9 @@ footer{text-align:center;color:#888;padding:20px}
 <section id="homeScreen">
 <div class="card">
 <h3>🎮 ONLINE LOBBY</h3>
-<button id="createBtn" onclick="createRoom()" disabled>CREATE ROOM</button>
+<button id="createBtn" disabled>CREATE ROOM</button>
 <input id="joinCode" maxlength="6" placeholder="Masukkan kode room">
-<button class="secondary" id="joinBtn" onclick="joinRoom()" disabled>JOIN ROOM</button>
+<button class="secondary" id="joinBtn" disabled>JOIN ROOM</button>
 </div>
 </section>
 
@@ -51,29 +56,52 @@ footer{text-align:center;color:#888;padding:20px}
 <h2 id="roomCode"></h2>
 <p id="roomStatus">Menunggu pemain...</p>
 <div id="playerList"></div>
+
 <div id="roleCard" class="card hidden" style="background:#33264d;border:1px solid #c6a5ff">
-  <h3>🎭 ROLE KAMU</h3>
-  <h2 id="myRole">Menunggu pembagian role...</h2>
-  <p id="roleDescription"></p>
-  <small>Jangan tunjukkan layar ini kepada pemain lain.</small>
+<h3>🎭 ROLE KAMU</h3>
+<h2 id="myRole">Menunggu pembagian role...</h2>
+<p id="roleDescription"></p>
+<small>Jangan tunjukkan layar ini kepada pemain lain.</small>
 </div>
-<button id="startBtn" onclick="startGame()" disabled>🐺 START GAME</button>
-<button class="secondary" onclick="copyCode()">SALIN KODE ROOM</button>
-<button style="background:#a83248" onclick="leaveRoom()">LEAVE ROOM</button>
+
+<button id="startBtn" disabled>🐺 START GAME</button>
+<button class="secondary" id="copyBtn">SALIN KODE ROOM</button>
+<button id="leaveBtn" style="background:#a83248">LEAVE ROOM</button>
 </div>
 </section>
 
 <div class="card">
 <p id="message">Status: menunggu koneksi.</p>
+<p class="note">
+WPR v0.5 tahap awal: room dan pembagian role resmi 8–20 pemain.
+Fase, voting, aksi malam, dan resolusi kemampuan belum aktif.
+</p>
 </div>
+
 </div>
 
 <footer>WEREWOLF PARTY REBORN © 2026</footer>
 
 <script type="module">
+
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
-import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
-import { getDatabase, ref, get, set, remove, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
+
+import {
+  getAuth,
+  signInAnonymously
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+
+import {
+  getDatabase,
+  ref,
+  get,
+  set,
+  remove,
+  update,
+  onValue,
+  onDisconnect
+} from "https://www.gstatic.com/firebasejs/11.10.0/firebase-database.js";
+
 
 const firebaseConfig = {
   apiKey: "AIzaSyDqbJnNomcZKlS6fQLGdaUoiRQrvXgMsgg",
@@ -90,12 +118,82 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
+
 let myUid = null;
 let currentCode = null;
 let playerRef = null;
 let stopListening = null;
+let stopRoleListening = null;
 
 const $ = id => document.getElementById(id);
+
+const ROLE_INFO = {
+  werewolf: {
+    name:"Werewolf", faction:"red",
+    description:"Bagian dari The Pack. Bersama Werewolf lain menentukan target serangan malam."
+  },
+  sniper: {
+    name:"Sniper", faction:"red",
+    description:"Memiliki satu peluru dan dapat menembak mulai Night 2."
+  },
+  blood_hunter: {
+    name:"Blood Hunter", faction:"red",
+    description:"Dapat memeriksa riwayat perlindungan target dan melihat jumlah pemain tiap faksi."
+  },
+  doctor: {
+    name:"Doctor", faction:"blue",
+    description:"Dapat menyuntik pemain sesuai aturan kemampuan Doctor."
+  },
+  seer: {
+    name:"Seer", faction:"blue",
+    description:"Dapat memeriksa warna faksi pemain pada malam hari."
+  },
+  bodyguard: {
+    name:"Bodyguard", faction:"blue",
+    description:"Dapat melindungi satu pemain pada malam hari."
+  },
+  priest: {
+    name:"Priest", faction:"blue",
+    description:"Dapat menawarkan pemulihan kepada Zombie Peranakan."
+  },
+  cursed: {
+    name:"Cursed", faction:"blue",
+    description:"Awalnya Blue. Dapat berubah menjadi Red jika terkena serangan Werewolf sesuai aturan."
+  },
+  lycan: {
+    name:"Lycan", faction:"blue",
+    description:"Berada di faksi Blue, tetapi terlihat Red oleh Seer. Tidak memiliki kemampuan khusus."
+  },
+  investigator: {
+    name:"Investigator", faction:"blue",
+    description:"Dapat membandingkan faksi dua pemain."
+  },
+  tracker: {
+    name:"Tracker", faction:"blue",
+    description:"Dapat melihat faksi pengirim aksi yang menuju target."
+  },
+  civilian: {
+    name:"Civilian", faction:"blue",
+    description:"Tidak memiliki kemampuan khusus."
+  },
+  zombie_induk: {
+    name:"Zombie Induk", faction:"green",
+    description:"Bagian dari The Undead. Dapat menginfeksi satu target atau melewati aksi malam."
+  }
+};
+
+const CIVILIAN_PERSONAS = [
+  "Pesulap",
+  "Montir",
+  "Satpam",
+  "Guru",
+  "Tukang Kayu",
+  "Penyanyi Dangdut",
+  "YouTuber",
+  "Ilmuwan",
+  "Fotografer",
+  "Tukang Kebersihan"
+];
 
 function showMessage(message){
   $("message").textContent = message;
@@ -111,274 +209,469 @@ function getPlayerName(){
 
 function escapeHTML(value){
   return String(value).replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",
-    '"':"&quot;","'":"&#39;"
+    "&":"&amp;",
+    "<":"&lt;",
+    ">":"&gt;",
+    '"':"&quot;",
+    "'":"&#39;"
   })[c]);
+}
+
+function shuffle(array){
+  const result = [...array];
+
+  for(let i=result.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [result[i],result[j]]=[result[j],result[i]];
+  }
+
+  return result;
 }
 
 function showRoom(code){
   $("homeScreen").classList.add("hidden");
   $("roomScreen").classList.remove("hidden");
-  $("roomCode").textContent = "KODE: " + code;
+  $("roomCode").textContent="KODE: "+code;
 }
 
-function listenRoom(code){
-  if(stopListening) stopListening();
-  const roomRef = ref(db, "rooms/" + code);
+function createRoleComposition(count){
 
-  stopListening = onValue(roomRef, snapshot => {
+  if(count<8 || count>20){
+    throw new Error("Jumlah pemain harus 8–20.");
+  }
+
+  const roles = [
+    "werewolf",
+    "sniper",
+    "doctor",
+    "seer",
+    "bodyguard",
+    "civilian",
+    "civilian",
+    "zombie_induk"
+  ];
+
+  if(count>=9) roles.push("priest");
+  if(count>=10) roles.push("cursed");
+  if(count>=11) roles.push("lycan");
+  if(count>=12) roles.push("investigator");
+  if(count>=13) roles.push("blood_hunter");
+  if(count>=14) roles.push("tracker");
+  if(count>=15) roles.push("werewolf");
+
+  while(roles.length<count){
+    roles.push("civilian");
+  }
+
+  return shuffle(roles);
+}
+
+function assignPersonas(roles){
+
+  const count=roles.filter(role=>role==="civilian").length;
+
+  if(count>6){
+    throw new Error("Jumlah Civilian melebihi batas enam orang.");
+  }
+
+  return shuffle(CIVILIAN_PERSONAS).slice(0,count);
+}
+
+
+/* ROOM LISTENER */
+
+function listenRoom(code){
+
+  if(stopListening) stopListening();
+
+  const roomRef=ref(db,"rooms/"+code);
+
+  stopListening=onValue(roomRef,snapshot=>{
+
     if(!snapshot.exists()){
       showMessage("Room sudah ditutup atau tidak ditemukan.");
       return;
     }
 
-    const room = snapshot.val();
-    const players = room.players || {};
-    const entries = Object.entries(players);
+    const room=snapshot.val();
+    const players=room.players||{};
+    const entries=Object.entries(players);
 
-    $("roomStatus").textContent =
-      (room.status === "started" ? "🎮 GAME DIMULAI" : "Menunggu pemain...") +
-      " — " + entries.length + " / 12 pemain";
+    $("roomStatus").textContent=
+      (room.status==="started"?"🎮 GAME DIMULAI":"Menunggu pemain...")+
+      " — "+entries.length+" / 20 pemain";
 
-    let listHTML = "<h3>👥 DAFTAR PEMAIN</h3>";
-    entries.forEach(([uid, player], index) => {
-      listHTML += "<div class='player'>" +
-        (index + 1) + ". " + escapeHTML(player.name) +
-        (uid === room.hostUid ? " 👑 HOST" : "") +
+    let html="<h3>👥 DAFTAR PEMAIN</h3>";
+
+    entries.forEach(([uid,player],index)=>{
+      html+="<div class='player'>"+
+        (index+1)+". "+escapeHTML(player.name||"Guest Player")+
+        (uid===room.hostUid?" 👑 HOST":"")+
         "</div>";
     });
-    $("playerList").innerHTML = listHTML;
 
-    const isHost = room.hostUid === myUid;
-    $("startBtn").classList.toggle("hidden", !isHost);
-    $("startBtn").disabled = !isHost || room.status !== "lobby" || entries.length < 5;
-    $("startBtn").textContent = room.status === "started"
-      ? "GAME SUDAH DIMULAI" : "🐺 START GAME (MINIMAL 5 PEMAIN)";
+    $("playerList").innerHTML=html;
 
-    if(room.status === "started"){
+    const isHost=room.hostUid===myUid;
+
+    $("startBtn").classList.toggle("hidden",!isHost);
+    $("startBtn").disabled=
+      !isHost ||
+      room.status!=="lobby" ||
+      entries.length<8 ||
+      entries.length>20;
+
+    $("startBtn").textContent=
+      room.status==="started"
+        ?"GAME SUDAH DIMULAI"
+        :"🐺 START GAME ("+entries.length+"/20)";
+
+    if(room.status==="started"){
       $("roleCard").classList.remove("hidden");
       listenMyRole(code);
-    } else {
+    }else{
       $("roleCard").classList.add("hidden");
     }
+
     showMessage("✅ Room tersinkronisasi secara realtime.");
-  }, error => showMessage("Gagal membaca room: " + error.message));
+
+  },error=>{
+    showMessage("Gagal membaca room: "+error.message);
+  });
 }
 
-let stopRoleListening = null;
+
+/* PRIVATE ROLE LISTENER */
 
 function listenMyRole(code){
+
   if(stopRoleListening) return;
-  const myRoleRef = ref(db, "privateRoles/" + code + "/" + myUid);
-  stopRoleListening = onValue(myRoleRef, snapshot => {
+
+  const roleRef=ref(db,"privateRoles/"+code+"/"+myUid);
+
+  stopRoleListening=onValue(roleRef,snapshot=>{
+
     if(!snapshot.exists()){
-      $("myRole").textContent = "Role belum tersedia";
-      $("roleDescription").textContent = "Minta host memeriksa pembagian role.";
+      $("myRole").textContent="Role belum tersedia";
+      $("roleDescription").textContent="Minta host memeriksa pembagian role.";
       return;
     }
-    const role = snapshot.val().role;
-    const descriptions = {
-      "Werewolf": "Kamu berada di tim Werewolf. Jangan sampai identitasmu terbongkar.",
-      "Doctor": "Kamu bisa melindungi satu pemain saat malam.",
-      "Sniper": "Kamu memiliki kemampuan khusus untuk menembak sesuai aturan permainan.",
-      "Civilian": "Cari tahu siapa Werewolf dan bantu warga memenangkan permainan."
-    };
-    $("myRole").textContent = role || "Tidak diketahui";
-    $("roleDescription").textContent = descriptions[role] || "";
-  }, error => showMessage("Gagal membaca role: " + error.message));
+
+    const data=snapshot.val();
+    const info=ROLE_INFO[data.initialRoleId];
+
+    $("myRole").textContent=data.role||"Tidak diketahui";
+    $("roleDescription").textContent=info?info.description:"";
+
+  },error=>{
+    showMessage("Gagal membaca role: "+error.message);
+  });
 }
 
+
+/* START GAME */
+
 async function startGame(){
+
   try{
+
     if(!currentCode) return;
-    const roomRef = ref(db, "rooms/" + currentCode);
-    const snapshot = await get(roomRef);
-    if(!snapshot.exists()) throw new Error("Room tidak ditemukan.");
 
-    const room = snapshot.val();
-    if(room.hostUid !== myUid) throw new Error("Hanya host yang bisa memulai game.");
-    if(room.status !== "lobby") throw new Error("Game sudah dimulai.");
+    const roomRef=ref(db,"rooms/"+currentCode);
+    const snapshot=await get(roomRef);
 
-    const players = Object.entries(room.players || {});
-    if(players.length < 5) throw new Error("Minimal 5 pemain untuk memulai.");
-    if(players.length > 12) throw new Error("Maksimal 12 pemain.");
-
-    const roles = [
-      "Werewolf", "Werewolf", "Doctor", "Sniper",
-      ...Array(Math.max(0, players.length - 4)).fill("Civilian")
-    ];
-    for(let i = roles.length - 1; i > 0; i--){
-      const j = Math.floor(Math.random() * (i + 1));
-      [roles[i], roles[j]] = [roles[j], roles[i]];
+    if(!snapshot.exists()){
+      throw new Error("Room tidak ditemukan.");
     }
 
-    const privateRoleData = {};
-    players.forEach(([uid], index) => {
-      privateRoleData[uid] = { role: roles[index] };
+    const room=snapshot.val();
+
+    if(room.hostUid!==myUid){
+      throw new Error("Hanya host yang bisa memulai game.");
+    }
+
+    if(room.status!=="lobby"){
+      throw new Error("Game sudah dimulai.");
+    }
+
+    const players=Object.entries(room.players||{});
+
+    if(players.length<8){
+      throw new Error("Minimal 8 pemain.");
+    }
+
+    if(players.length>20){
+      throw new Error("Maksimal 20 pemain.");
+    }
+
+    const roles=createRoleComposition(players.length);
+    const personas=assignPersonas(roles);
+
+    const privateRoles={};
+    const privatePlayerInfo={};
+
+    let personaIndex=0;
+
+    players.forEach(([uid],index)=>{
+
+      const roleId=roles[index];
+      const info=ROLE_INFO[roleId];
+
+      const persona=roleId==="civilian"
+        ?personas[personaIndex++]
+        :null;
+
+      privateRoles[uid]={
+        role:info.name,
+        initialRoleId:roleId,
+        currentRoleId:roleId,
+        initialFaction:info.faction,
+        currentFaction:info.faction,
+        alive:true,
+        transformed:false,
+        assignedAt:Date.now(),
+        abilities:{
+          used:false,
+          cooldown:false,
+          bulletAvailable:roleId==="sniper"
+        }
+      };
+
+      privatePlayerInfo[uid]={
+        persona:persona,
+        personaRevealed:false
+      };
+
     });
 
-    await set(ref(db, "privateRoles/" + currentCode), privateRoleData);
-    await set(ref(db, "rooms/" + currentCode + "/status"), "started");
-    await set(ref(db, "rooms/" + currentCode + "/startedAt"), Date.now());
-    showMessage("🎉 Game dimulai! Role sudah dibagikan.");
+    const updates={};
+
+    updates["privateRoles/"+currentCode]=privateRoles;
+    updates["privatePlayerInfo/"+currentCode]=privatePlayerInfo;
+    updates["rooms/"+currentCode+"/status"]="started";
+    updates["rooms/"+currentCode+"/startedAt"]=Date.now();
+    updates["rooms/"+currentCode+"/playerCount"]=players.length;
+
+    await update(ref(db),updates);
+
+    showMessage("🎉 Game dimulai! Role berhasil dibagikan.");
+
   }catch(error){
-    showMessage("Gagal memulai game: " + error.message);
+    showMessage("Gagal memulai game: "+error.message);
   }
 }
 
+
+/* CREATE ROOM */
+
 async function createRoom(){
+
   try{
-    const code = makeCode();
-    const roomRef = ref(db, "rooms/" + code);
-    const existing = await get(roomRef);
+
+    const code=makeCode();
+    const roomRef=ref(db,"rooms/"+code);
+    const existing=await get(roomRef);
 
     if(existing.exists()){
-      showMessage("Kode bentrok. Coba buat room lagi.");
+      showMessage("Kode room bentrok. Coba lagi.");
       return;
     }
 
-    const name = getPlayerName();
-    playerRef = ref(db, "rooms/" + code + "/players/" + myUid);
+    const now=Date.now();
 
-    await set(roomRef, {
-      code: code,
-      hostUid: myUid,
-      status: "lobby",
-      createdAt: Date.now(),
-      players: {
-        [myUid]: {
-          name: name,
-          joinedAt: Date.now()
+    playerRef=ref(db,"rooms/"+code+"/players/"+myUid);
+
+    await set(roomRef,{
+      code:code,
+      hostUid:myUid,
+      status:"lobby",
+      createdAt:now,
+      playerCount:1,
+      players:{
+        [myUid]:{
+          name:getPlayerName(),
+          joinedAt:now
         }
       }
     });
 
     await onDisconnect(playerRef).remove();
 
-    currentCode = code;
+    currentCode=code;
     showRoom(code);
     listenRoom(code);
+
     showMessage("Room berhasil dibuat!");
+
   }catch(error){
-    showMessage("Gagal membuat room: " + error.message);
+    showMessage("Gagal membuat room: "+error.message);
   }
 }
 
+
+/* JOIN ROOM */
+
 async function joinRoom(){
+
   try{
-    const code = $("joinCode").value.trim().toUpperCase();
+
+    const code=$("joinCode").value.trim().toUpperCase();
 
     if(!/^[A-Z0-9]{6}$/.test(code)){
       showMessage("Masukkan kode room 6 karakter.");
       return;
     }
 
-    const roomRef = ref(db, "rooms/" + code);
-    const snapshot = await get(roomRef);
+    const roomRef=ref(db,"rooms/"+code);
+    const snapshot=await get(roomRef);
 
     if(!snapshot.exists()){
       showMessage("Room tidak ditemukan.");
       return;
     }
 
-    const room = snapshot.val();
-    const players = room.players || {};
+    const room=snapshot.val();
+    const players=room.players||{};
 
-    if(room.status !== "lobby"){
-      showMessage("Game sudah dimulai. Tidak bisa bergabung.");
+    if(room.status!=="lobby"){
+      showMessage("Game sudah dimulai.");
       return;
     }
 
-    if(Object.keys(players).length >= 12){
+    if(Object.keys(players).length>=20){
       showMessage("Room sudah penuh.");
       return;
     }
 
-    playerRef = ref(db, "rooms/" + code + "/players/" + myUid);
+    if(players[myUid]){
+      showMessage("Kamu sudah berada di room ini.");
+      return;
+    }
 
-    await set(playerRef, {
-      name: getPlayerName(),
-      joinedAt: Date.now()
+    playerRef=ref(db,"rooms/"+code+"/players/"+myUid);
+
+    await set(playerRef,{
+      name:getPlayerName(),
+      joinedAt:Date.now()
     });
 
     await onDisconnect(playerRef).remove();
 
-    currentCode = code;
+    currentCode=code;
     showRoom(code);
     listenRoom(code);
+
     showMessage("Berhasil bergabung ke room!");
+
   }catch(error){
-    showMessage("Gagal bergabung: " + error.message);
+    showMessage("Gagal bergabung: "+error.message);
   }
 }
 
+
+/* LEAVE ROOM */
+
 async function leaveRoom(){
+
   try{
+
     if(!currentCode) return;
 
     if(stopListening){
       stopListening();
-      stopListening = null;
+      stopListening=null;
     }
+
     if(stopRoleListening){
       stopRoleListening();
-      stopRoleListening = null;
+      stopRoleListening=null;
     }
 
-    const roomRef = ref(db, "rooms/" + currentCode);
-    const snapshot = await get(roomRef);
+    const roomRef=ref(db,"rooms/"+currentCode);
+    const snapshot=await get(roomRef);
 
     if(snapshot.exists()){
-      const room = snapshot.val();
 
-      if(room.hostUid === myUid){
+      const room=snapshot.val();
+
+      if(room.hostUid===myUid){
         await remove(roomRef);
       }else{
         await remove(playerRef);
+
+        const remaining=Object.keys(room.players||{}).length-1;
+
+        await set(
+          ref(db,"rooms/"+currentCode+"/playerCount"),
+          Math.max(0,remaining)
+        );
       }
     }
 
-    await onDisconnect(playerRef).cancel();
+    if(playerRef){
+      await onDisconnect(playerRef).cancel();
+    }
 
-    currentCode = null;
-    playerRef = null;
+    currentCode=null;
+    playerRef=null;
 
     $("roomScreen").classList.add("hidden");
     $("homeScreen").classList.remove("hidden");
+    $("roleCard").classList.add("hidden");
+
     showMessage("Kamu sudah keluar dari room.");
+
   }catch(error){
-    showMessage("Gagal keluar: " + error.message);
+    showMessage("Gagal keluar: "+error.message);
   }
 }
 
+
+/* COPY ROOM CODE */
+
 async function copyCode(){
+
   if(!currentCode) return;
+
   try{
     await navigator.clipboard.writeText(currentCode);
     showMessage("Kode room berhasil disalin!");
   }catch(error){
-    showMessage("Kode room kamu: " + currentCode);
+    showMessage("Kode room kamu: "+currentCode);
   }
 }
 
-window.createRoom = createRoom;
-window.joinRoom = joinRoom;
-window.leaveRoom = leaveRoom;
-window.copyCode = copyCode;
-window.startGame = startGame;
+
+/* BUTTON EVENTS */
+
+$("createBtn").addEventListener("click",createRoom);
+$("joinBtn").addEventListener("click",joinRoom);
+$("startBtn").addEventListener("click",startGame);
+$("leaveBtn").addEventListener("click",leaveRoom);
+$("copyBtn").addEventListener("click",copyCode);
+
+
+/* FIREBASE AUTH */
 
 try{
-  const result = await signInAnonymously(auth);
-  myUid = result.user.uid;
 
-  $("status").textContent = "🟢 Online — ID pemain berhasil dibuat";
-  $("createBtn").disabled = false;
-  $("joinBtn").disabled = false;
+  const result=await signInAnonymously(auth);
+  myUid=result.user.uid;
+
+  $("status").textContent="🟢 Online — ID pemain berhasil dibuat";
+
+  $("createBtn").disabled=false;
+  $("joinBtn").disabled=false;
+
   showMessage("Firebase siap digunakan!");
+
 }catch(error){
-  $("status").textContent = "🔴 Login gagal: " + error.message;
-  showMessage(error.code);
+
+  $("status").textContent="🔴 Login gagal: "+error.message;
+  showMessage(error.code||error.message);
+
 }
+
 </script>
 </body>
 </html>
